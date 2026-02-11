@@ -11,13 +11,15 @@ from app.question_engine.question_selector import QuestionSelector
 from app.question_engine.schemas import QuestionSet
 from app.interview_flow.session_manager import SessionManager
 from app.interview_flow.schemas import InterviewSession, QuestionProgress, SessionSummary
+from app.answer_analysis.final_analyzer import FinalAnalyzer
+from app.answer_analysis.schemas import FullIntegrityReport
 from typing import List
 import uvicorn
 import shutil
 import os
 import tempfile
 
-app = FastAPI(title="AI HR System - Complete", version="5.0")
+app = FastAPI(title="AI HR System - Complete", version="6.0")
 
 # Global Instances
 analyzer = None
@@ -27,10 +29,11 @@ level_detector = None
 difficulty_mapper = None
 question_selector = None
 session_manager = None
+integrity_analyzer = None
 
 @app.on_event("startup")
 async def startup_event():
-    global analyzer, summarizer, ranker, level_detector, difficulty_mapper, question_selector, session_manager
+    global analyzer, summarizer, ranker, level_detector, difficulty_mapper, question_selector, session_manager, integrity_analyzer
     analyzer = CVAnalyzer()
     summarizer = AISummarizer()
     ranker = TopCandidatesRanker()
@@ -38,6 +41,7 @@ async def startup_event():
     difficulty_mapper = DifficultyMapper()
     question_selector = QuestionSelector()
     session_manager = SessionManager()
+    integrity_analyzer = FinalAnalyzer()
 
 @app.post("/analyze", response_model=CVAnalysisResult)
 async def analyze_cv(file: UploadFile = File(...)):
@@ -296,6 +300,33 @@ async def get_session_summary(session_id: str):
     try:
         summary = session_manager.get_session_summary(session_id)
         return summary
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/analyze-integrity/{session_id}", response_model=FullIntegrityReport)
+async def analyze_integrity(session_id: str):
+    """
+    Analyze the integrity and honesty of a completed interview session.
+    Detects AI usage, plagiarism, and suspicious timing.
+    """
+    if not session_manager or not integrity_analyzer:
+        raise HTTPException(status_code=500, detail="Analyzers not initialized")
+    
+    try:
+        # 1. Get session summary
+        summary = session_manager.get_session_summary(session_id)
+        
+        # 2. Get the session to access question data (difficulty, etc.)
+        session = session_manager.get_session_status(session_id)
+        
+        # 3. Perform analysis
+        report = integrity_analyzer.analyze_session(summary, session.questions)
+        return report
+        
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
