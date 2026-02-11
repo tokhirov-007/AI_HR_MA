@@ -4,25 +4,32 @@ from app.cv_intelligence.schemas import CVAnalysisResult
 from app.summary_engine.ai_summarizer import AISummarizer
 from app.summary_engine.top_candidates import TopCandidatesRanker
 from app.summary_engine.schemas import CandidateSummary, TopCandidatesResponse
+from app.candidate_level.level_detector import LevelDetector
+from app.candidate_level.difficulty_mapper import DifficultyMapper
+from app.candidate_level.schemas import LevelDetectionResult, InterviewPlan
 from typing import List
 import uvicorn
 import shutil
 import os
 import tempfile
 
-app = FastAPI(title="AI HR System - CV Intelligence + Summary", version="2.0")
+app = FastAPI(title="AI HR System - Complete", version="3.0")
 
 # Global Instances
 analyzer = None
 summarizer = None
 ranker = None
+level_detector = None
+difficulty_mapper = None
 
 @app.on_event("startup")
 async def startup_event():
-    global analyzer, summarizer, ranker
+    global analyzer, summarizer, ranker, level_detector, difficulty_mapper
     analyzer = CVAnalyzer()
     summarizer = AISummarizer()
     ranker = TopCandidatesRanker()
+    level_detector = LevelDetector()
+    difficulty_mapper = DifficultyMapper()
 
 @app.post("/analyze", response_model=CVAnalysisResult)
 async def analyze_cv(file: UploadFile = File(...)):
@@ -112,6 +119,43 @@ async def rank_candidates(
     try:
         result = ranker.rank_candidates(candidates)
         return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/detect-level", response_model=LevelDetectionResult)
+async def detect_candidate_level(
+    candidate_name: str = Body(...),
+    cv_result: CVAnalysisResult = Body(...)
+):
+    """
+    Detect candidate seniority level (Junior/Middle/Senior).
+    """
+    if not level_detector:
+        raise HTTPException(status_code=500, detail="Level detector not initialized")
+    
+    try:
+        result = level_detector.detect_level(candidate_name, cv_result)
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/interview-plan", response_model=InterviewPlan)
+async def generate_interview_plan(
+    level_result: LevelDetectionResult = Body(...)
+):
+    """
+    Generate interview plan with difficulty-mapped questions based on candidate level.
+    """
+    if not difficulty_mapper:
+        raise HTTPException(status_code=500, detail="Difficulty mapper not initialized")
+    
+    try:
+        plan = difficulty_mapper.generate_interview_plan(level_result)
+        return plan
     except Exception as e:
         import traceback
         traceback.print_exc()
