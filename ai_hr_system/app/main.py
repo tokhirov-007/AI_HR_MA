@@ -7,13 +7,17 @@ from app.summary_engine.schemas import CandidateSummary, TopCandidatesResponse
 from app.candidate_level.level_detector import LevelDetector
 from app.candidate_level.difficulty_mapper import DifficultyMapper
 from app.candidate_level.schemas import LevelDetectionResult, InterviewPlan
+from app.question_engine.question_selector import QuestionSelector
+from app.question_engine.schemas import QuestionSet
+from app.interview_flow.session_manager import SessionManager
+from app.interview_flow.schemas import InterviewSession, QuestionProgress, SessionSummary
 from typing import List
 import uvicorn
 import shutil
 import os
 import tempfile
 
-app = FastAPI(title="AI HR System - Complete", version="3.0")
+app = FastAPI(title="AI HR System - Complete", version="5.0")
 
 # Global Instances
 analyzer = None
@@ -21,15 +25,19 @@ summarizer = None
 ranker = None
 level_detector = None
 difficulty_mapper = None
+question_selector = None
+session_manager = None
 
 @app.on_event("startup")
 async def startup_event():
-    global analyzer, summarizer, ranker, level_detector, difficulty_mapper
+    global analyzer, summarizer, ranker, level_detector, difficulty_mapper, question_selector, session_manager
     analyzer = CVAnalyzer()
     summarizer = AISummarizer()
     ranker = TopCandidatesRanker()
     level_detector = LevelDetector()
     difficulty_mapper = DifficultyMapper()
+    question_selector = QuestionSelector()
+    session_manager = SessionManager()
 
 @app.post("/analyze", response_model=CVAnalysisResult)
 async def analyze_cv(file: UploadFile = File(...)):
@@ -156,6 +164,140 @@ async def generate_interview_plan(
     try:
         plan = difficulty_mapper.generate_interview_plan(level_result)
         return plan
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate-questions", response_model=QuestionSet)
+async def generate_interview_questions(
+    level_result: LevelDetectionResult = Body(...),
+    max_questions: int = Body(5)
+):
+    """
+    Generate interview questions based on candidate level and skills.
+    Only generates questions for skills the candidate has.
+    """
+    if not question_selector:
+        raise HTTPException(status_code=500, detail="Question selector not initialized")
+    
+    try:
+        question_set = question_selector.select_questions(
+            level_result=level_result,
+            max_total_questions=max_questions
+        )
+        return question_set
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/start-interview", response_model=InterviewSession)
+async def start_interview(
+    candidate_id: str = Body(...),
+    candidate_name: str = Body(...),
+    question_set: QuestionSet = Body(...)
+):
+    """
+    Start a new interview session.
+    Creates session and starts first question with timer.
+    """
+    if not session_manager:
+        raise HTTPException(status_code=500, detail="Session manager not initialized")
+    
+    try:
+        session = session_manager.create_session(
+            candidate_id=candidate_id,
+            candidate_name=candidate_name,
+            question_set=question_set
+        )
+        return session
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/current-question/{session_id}", response_model=QuestionProgress)
+async def get_current_question(session_id: str):
+    """
+    Get current question for active session.
+    Includes time remaining.
+    """
+    if not session_manager:
+        raise HTTPException(status_code=500, detail="Session manager not initialized")
+    
+    try:
+        question = session_manager.get_current_question(session_id)
+        if not question:
+            raise HTTPException(status_code=404, detail="No active question")
+        return question
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/submit-answer/{session_id}")
+async def submit_answer(
+    session_id: str,
+    answer_text: str = Body(...)
+):
+    """
+    Submit answer for current question.
+    Automatically moves to next question or finishes session.
+    """
+    if not session_manager:
+        raise HTTPException(status_code=500, detail="Session manager not initialized")
+    
+    try:
+        answer = session_manager.submit_answer(
+            session_id=session_id,
+            answer_text=answer_text
+        )
+        return {
+            "status": "success",
+            "answer": answer,
+            "message": "Answer submitted successfully"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/session-status/{session_id}", response_model=InterviewSession)
+async def get_session_status(session_id: str):
+    """
+    Get current status of interview session.
+    """
+    if not session_manager:
+        raise HTTPException(status_code=500, detail="Session manager not initialized")
+    
+    try:
+        session = session_manager.get_session_status(session_id)
+        return session
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/session-summary/{session_id}", response_model=SessionSummary)
+async def get_session_summary(session_id: str):
+    """
+    Get summary of completed interview session.
+    """
+    if not session_manager:
+        raise HTTPException(status_code=500, detail="Session manager not initialized")
+    
+    try:
+        summary = session_manager.get_session_summary(session_id)
+        return summary
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         import traceback
         traceback.print_exc()
