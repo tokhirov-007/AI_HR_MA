@@ -13,6 +13,10 @@ from app.interview_flow.session_manager import SessionManager
 from app.interview_flow.schemas import InterviewSession, QuestionProgress, SessionSummary
 from app.answer_analysis.final_analyzer import FinalAnalyzer
 from app.answer_analysis.schemas import FullIntegrityReport
+from app.scoring.score_engine import ScoreEngine
+from app.scoring.recommendation import RecommendationEngine
+from app.scoring.confidence_level import ConfidenceAnalyzer
+from app.scoring.schemas import FinalRecommendation
 from typing import List
 import uvicorn
 import shutil
@@ -30,10 +34,13 @@ difficulty_mapper = None
 question_selector = None
 session_manager = None
 integrity_analyzer = None
+score_engine = None
+recommendation_engine = None
+confidence_analyzer = None
 
 @app.on_event("startup")
 async def startup_event():
-    global analyzer, summarizer, ranker, level_detector, difficulty_mapper, question_selector, session_manager, integrity_analyzer
+    global analyzer, summarizer, ranker, level_detector, difficulty_mapper, question_selector, session_manager, integrity_analyzer, score_engine, recommendation_engine, confidence_analyzer
     analyzer = CVAnalyzer()
     summarizer = AISummarizer()
     ranker = TopCandidatesRanker()
@@ -42,6 +49,9 @@ async def startup_event():
     question_selector = QuestionSelector()
     session_manager = SessionManager()
     integrity_analyzer = FinalAnalyzer()
+    score_engine = ScoreEngine()
+    recommendation_engine = RecommendationEngine()
+    confidence_analyzer = ConfidenceAnalyzer()
 
 @app.post("/analyze", response_model=CVAnalysisResult)
 async def analyze_cv(file: UploadFile = File(...)):
@@ -326,6 +336,75 @@ async def analyze_integrity(session_id: str):
         # 3. Perform analysis
         report = integrity_analyzer.analyze_session(summary, session.questions)
         return report
+        
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate-recommendation/{session_id}", response_model=FinalRecommendation)
+async def generate_recommendation(session_id: str):
+    """
+    Generate the absolute final HR recommendation.
+    Aggregates technical score, integrity flags, and behavior.
+    """
+    if not all([session_manager, integrity_analyzer, score_engine, recommendation_engine, confidence_analyzer]):
+        raise HTTPException(status_code=500, detail="Engines not initialized")
+    
+    try:
+        # 1. Get session summary and technical data
+        summary = session_manager.get_session_summary(session_id)
+        session = session_manager.get_session_status(session_id)
+        
+        # 2. Get integrity report (Step 6)
+        integrity_report = integrity_analyzer.analyze_session(summary, session.questions)
+        
+        # 3. Calculate Score Breakdown
+        breakdown = score_engine.aggregate(summary, integrity_report, session.questions)
+        
+        # 4. Calculate Final Weighted Score
+        # Assume a mix based on overall session (heuristic)
+        difficulty_mix = "medium" # Default
+        if all(q["difficulty"] == "hard" for q in session.questions):
+            difficulty_mix = "hard"
+        elif all(q["difficulty"] == "easy" for q in session.questions):
+            difficulty_mix = "easy"
+            
+        final_score = score_engine.calculate_final_weighted_score(breakdown, difficulty_mix)
+        
+        # 5. Get HR Recommendation & Decision
+        decision, reason = recommendation_engine.get_recommendation(
+            final_score, breakdown, integrity_report.global_flags
+        )
+        hr_comment = recommendation_engine.generate_comment(
+            decision, breakdown, integrity_report.global_flags
+        )
+        
+        # 6. Calculate Confidence
+        ans_lengths = [len(a.answer_text) for a in summary.answers]
+        confidence = confidence_analyzer.calculate(
+            summary.total_questions,
+            summary.answered_questions,
+            ans_lengths,
+            integrity_report.suspicious_answers_count
+        )
+        
+        return FinalRecommendation(
+            session_id=session_id,
+            candidate_name=summary.candidate_name,
+            final_score=final_score,
+            decision=decision, # Pydantic model with str, Enum should handle this, but let's be sure
+            confidence=confidence,
+            hr_comment=hr_comment,
+            score_breakdown=breakdown,
+            flags=integrity_report.global_flags + [reason],
+            metadata={
+                "difficulty_mix": difficulty_mix,
+                "integrity_summary": integrity_report.recommendation
+            }
+        )
         
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))

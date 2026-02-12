@@ -71,7 +71,7 @@ class AIDetector:
 
         # 4. Perfect grammar indicator (very basic heuristic)
         # In manual responses, people often miss capitalization or periods.
-        if text[0].isupper() and text.strip().endswith('.') and re.search(r'[A-Z]', text):
+        if text[0].isupper() and text.strip().endswith('.') and bool(re.search(r'[A-Z]', text)):
             # If everything is perfectly capitalized and punctuated
             structure_score += 0.1
 
