@@ -11,6 +11,8 @@ from app.question_engine.schemas import QuestionSet
 from datetime import datetime
 from typing import Optional, Dict
 import uuid
+from app.notifications.dispatcher import NotificationDispatcher
+from app.notifications.logger import NotificationLogger
 
 class SessionManager:
     """
@@ -24,6 +26,8 @@ class SessionManager:
         self.sessions: Dict[str, InterviewSession] = {}
         self.timers: Dict[str, Timer] = {}
         self.answer_handlers: Dict[str, AnswerHandler] = {}
+        self.notification_dispatcher = NotificationDispatcher()
+        self.audit_logger = NotificationLogger()
     
     def create_session(
         self,
@@ -52,8 +56,13 @@ class SessionManager:
             session_id=session_id,
             candidate_id=candidate_id,
             candidate_name=candidate_name,
+            candidate_email="candidate@example.com", # Hardcoded for now, usually from CV
+            candidate_phone="+998901234567",         # Hardcoded for now
+            candidate_lang="en",                     # Hardcoded for now
             start_time=datetime.now(),
             status=SessionStatus.ACTIVE,
+            status_internal="PENDING",
+            status_public="UNDER_REVIEW",
             total_questions=len(questions),
             current_question_index=0,
             questions=questions,
@@ -238,3 +247,34 @@ class SessionManager:
         # Clean up timer
         if session_id in self.timers:
             del self.timers[session_id]
+
+    async def update_status(self, session_id: str, new_internal: str, new_public: Optional[str] = None, actor: str = "HR_SYSTEM"):
+        """
+        Update internal and/or public status.
+        If public status changes, trigger notification.
+        """
+        session = self.sessions.get(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+
+        old_internal = session.status_internal
+        old_public = session.status_public
+
+        # Update internal
+        session.status_internal = new_internal
+        self.audit_logger.log_status_change(session_id, old_internal, new_internal, actor)
+
+        # Update public and notify if changed
+        if new_public and new_public != old_public:
+            session.status_public = new_public
+            self.audit_logger.log_status_change(session_id, old_public, new_public, f"{actor}_PUBLIC")
+            
+            # Trigger real notification
+            await self.notification_dispatcher.send_final_decision(
+                candidate_id=session_id,
+                name=session.candidate_name,
+                email=session.candidate_email,
+                phone=session.candidate_phone,
+                status_public=new_public,
+                lang=session.candidate_lang
+            )

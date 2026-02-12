@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, Message
 from app.bot.permissions import BotPermissions
 from app.bot.schemas import HRAction
+import app.main as main_app # Use for access to global session_manager
 
 router = Router()
 permissions = BotPermissions()
@@ -43,9 +44,25 @@ async def process_hr_action(callback: CallbackQuery):
     
     status_text = status_map.get(action_val, "UNKNOWN")
 
-    # 2. Logic to update backend status (Mocking for now)
-    # In a real app, this would call session_manager.update_status(session_id, action_val)
-    print(f"BOT ACTION: HR {callback.from_user.id} set session {session_id} to {action_val}")
+    # 2. Logic to update backend status
+    if main_app.session_manager:
+        try:
+            # We update INTERNAL status immediately
+            # We update PUBLIC status ONLY if it's INVITE or REJECT
+            # (Review might be an intermediate HR state)
+            new_public = action_val if action_val in [HRAction.INVITE.value, HRAction.REJECT.value] else None
+            
+            await main_app.session_manager.update_status(
+                session_id=session_id,
+                new_internal=action_val.upper(),
+                new_public=new_public,
+                actor=f"HR_{callback.from_user.id}"
+            )
+            print(f"BOT ACTION: HR {callback.from_user.id} updated session {session_id} to {action_val}")
+        except Exception as e:
+            print(f"Error updating session status: {e}")
+    else:
+        print(f"BOT ACTION: HR {callback.from_user.id} set session {session_id} to {action_val} (MOCK - Manager not found)")
 
     # 3. Update the message to show the decision
     new_text = f"{callback.message.text}\n\n<b>───────────────────</b>\n" \

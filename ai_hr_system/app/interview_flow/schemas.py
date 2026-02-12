@@ -32,6 +32,9 @@ class InterviewSession(BaseModel):
     session_id: str
     candidate_id: str
     candidate_name: str
+    candidate_email: str = "candidate@example.com"
+    candidate_phone: str = "+998901234567"
+    candidate_lang: str = "en"
     start_time: datetime
     end_time: Optional[datetime] = None
     status: SessionStatus
@@ -40,6 +43,9 @@ class InterviewSession(BaseModel):
     questions: List[Dict]  # List of questions from QuestionSet
     answers: List[Answer] = []
     current_question: Optional[QuestionProgress] = None
+    # Hidden logic: internal HR state vs what candidate sees
+    status_internal: str = "PENDING" 
+    status_public: str = "UNDER_REVIEW"
 
 class SessionSummary(BaseModel):
     """Summary of completed interview session"""

@@ -1,0 +1,11 @@
+[EN]
+Hello {{name}},
+Your interview results are being processed. We will contact you soon with a final decision.
+
+[RU]
+Здравствуйте, {{name}}!
+Результаты вашего интервью находятся в обработке. Мы свяжемся с вами в ближайшее время с финальным решением.
+
+[UZ]
+Assalomu alaykum, {{name}}!
+Sizning intervyu natijalaringiz ko'rib chiqilmoqda. Tez orada yakuniy qaror bilan bog'lanamiz.

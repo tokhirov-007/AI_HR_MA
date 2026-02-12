@@ -1,5 +1,8 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body
+from contextlib import asynccontextmanager
 from app.cv_intelligence.cv_analyzer import CVAnalyzer
+from aiogram import Bot
+from app.bot.notifications import BotNotificationManager
 from app.cv_intelligence.schemas import CVAnalysisResult
 from app.summary_engine.ai_summarizer import AISummarizer
 from app.summary_engine.top_candidates import TopCandidatesRanker
@@ -17,13 +20,41 @@ from app.scoring.score_engine import ScoreEngine
 from app.scoring.recommendation import RecommendationEngine
 from app.scoring.confidence_level import ConfidenceAnalyzer
 from app.scoring.schemas import FinalRecommendation
-from typing import List
+from typing import List, Optional
 import uvicorn
 import shutil
 import os
 import tempfile
 
-app = FastAPI(title="AI HR System - Complete", version="6.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan event handler for FastAPI (Startup and Shutdown).
+    """
+    global analyzer, summarizer, ranker, level_detector, difficulty_mapper, question_selector, session_manager, integrity_analyzer, score_engine, recommendation_engine, confidence_analyzer, bot, notifier
+    
+    # Bot Initialization
+    token = "8302463815:AAEtgldpuQm0QW0jv3xJCSbmNExmuJ4yb1M"
+    bot = Bot(token=token)
+    notifier = BotNotificationManager(bot)
+    
+    analyzer = CVAnalyzer()
+    summarizer = AISummarizer()
+    ranker = TopCandidatesRanker()
+    level_detector = LevelDetector()
+    difficulty_mapper = DifficultyMapper()
+    question_selector = QuestionSelector()
+    session_manager = SessionManager()
+    integrity_analyzer = FinalAnalyzer()
+    score_engine = ScoreEngine()
+    recommendation_engine = RecommendationEngine()
+    confidence_analyzer = ConfidenceAnalyzer()
+    yield
+    # Shutdown logic
+    if bot:
+        await bot.session.close()
+
+app = FastAPI(title="AI HR System - Complete", version="6.0", lifespan=lifespan)
 
 # Global Instances
 analyzer = None
@@ -37,21 +68,10 @@ integrity_analyzer = None
 score_engine = None
 recommendation_engine = None
 confidence_analyzer = None
+bot = None
+notifier = None
 
-@app.on_event("startup")
-async def startup_event():
-    global analyzer, summarizer, ranker, level_detector, difficulty_mapper, question_selector, session_manager, integrity_analyzer, score_engine, recommendation_engine, confidence_analyzer
-    analyzer = CVAnalyzer()
-    summarizer = AISummarizer()
-    ranker = TopCandidatesRanker()
-    level_detector = LevelDetector()
-    difficulty_mapper = DifficultyMapper()
-    question_selector = QuestionSelector()
-    session_manager = SessionManager()
-    integrity_analyzer = FinalAnalyzer()
-    score_engine = ScoreEngine()
-    recommendation_engine = RecommendationEngine()
-    confidence_analyzer = ConfidenceAnalyzer()
+# The startup event is now handled by the lifespan context manager above.
 
 @app.post("/analyze", response_model=CVAnalysisResult)
 async def analyze_cv(file: UploadFile = File(...)):
@@ -391,11 +411,11 @@ async def generate_recommendation(session_id: str):
             integrity_report.suspicious_answers_count
         )
         
-        return FinalRecommendation(
+        recommendation = FinalRecommendation(
             session_id=session_id,
             candidate_name=summary.candidate_name,
             final_score=final_score,
-            decision=decision, # Pydantic model with str, Enum should handle this, but let's be sure
+            decision=decision,
             confidence=confidence,
             hr_comment=hr_comment,
             score_breakdown=breakdown,
@@ -406,11 +426,47 @@ async def generate_recommendation(session_id: str):
             }
         )
         
+        # 7. Notify HR via Telegram (Step 8 Integration)
+        if notifier:
+            try:
+                await notifier.notify_new_candidate(recommendation)
+            except Exception as e:
+                print(f"Failed to trigger telegram notification: {e}")
+
+        return recommendation
+        
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         import traceback
         traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/update-session-status/{session_id}")
+async def update_session_status(
+    session_id: str, 
+    internal_status: str, 
+    public_status: Optional[str] = None,
+    hr_id: str = "ADMIN"
+):
+    """
+    Manual endpoint for HR to change candidate status.
+    Triggers notification if public_status is provided.
+    """
+    if not session_manager:
+        raise HTTPException(status_code=500, detail="Session Manager not initialized")
+    
+    try:
+        await session_manager.update_status(
+            session_id=session_id,
+            new_internal=internal_status,
+            new_public=public_status,
+            actor=hr_id
+        )
+        return {"status": "success", "session_id": session_id}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

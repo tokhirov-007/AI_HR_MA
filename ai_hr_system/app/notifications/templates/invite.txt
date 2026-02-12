@@ -1,0 +1,11 @@
+[EN]
+Hello {{name}},
+We are pleased to invite you for an interview at our office. The details will be sent shortly.
+
+[RU]
+Здравствуйте, {{name}}!
+Мы рады пригласить вас на интервью в наш офис. Детали встречи будут согласованы в ближайшее время.
+
+[UZ]
+Assalomu alaykum, {{name}}!
+Sizni ofisimizga intervyuga taklif qilishdan mamnunmiz. Tafsilotlar tez orada yuboriladi.

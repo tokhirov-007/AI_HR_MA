@@ -1,0 +1,11 @@
+[EN]
+Hello {{name}},
+Thank you for your interest. Unfortunately, we cannot proceed with your application at this time.
+
+[RU]
+Здравствуйте, {{name}}!
+Спасибо за ваш интерес. К сожалению, на данный момент мы не можем продолжить процесс по вашей кандидатуре.
+
+[UZ]
+Assalomu alaykum, {{name}}!
+Qiziqishingiz uchun rahmat. Afsuski, hozircha sizning nomzodingiz bo'yicha jarayonni davom ettira olmaymiz.
